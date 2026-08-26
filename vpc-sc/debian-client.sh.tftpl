@@ -1,0 +1,20 @@
+#Copyright 2026 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+set -x
+PS4='$LINENO: '
+exec 1> >(logger -s -t "$(basename "$0")" -p local0.info) 2>&1
+if test -f /startup-script-finished.txt; then   exit 1; fi
+export DEBIAN_FRONTEND=noninteractive
+apt-get remove -y --purge man-db
+apt-get install -y dnsutils tcpdump lsof netcat
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+cat <<EOF >> /etc/environment
+PROTECTED_BUCKET=${protected-bkt}
+UNPROTECTED_BUCKET=${unprotected-bkt}
+EOF
+touch /startup-script-finished.txt

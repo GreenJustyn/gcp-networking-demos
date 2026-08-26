@@ -1,0 +1,10 @@
+#!/bin/bash -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install tcpdump dnsutils apache2 -y
+a2ensite default-ssl
+a2enmod ssl
+HOSTNAME="$(curl -H "Metadata-Flavor:Google" http://metadata.google.internal/computeMetadata/v1/instance/name)"
+echo "Page served from: $HOSTNAME" | tee /var/www/html/index.html
+chkconfig httpd on || systemctl enable httpd || systemctl enable apache2
+service httpd restart || systemctl restart httpd || systemctl restart apache2

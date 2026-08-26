@@ -1,0 +1,35 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+cat <<EOF > /usr/local/share/ca-certificates/swp-host.crt
+${swp-host-ca}
+EOF
+cat <<EOF > /usr/local/share/ca-certificates/swp-tls-inspect.crt
+${swp-tlsinsp-ca}
+EOF
+update-ca-certificates
+export DEBIAN_FRONTEND=noninteractive
+mv /etc/apt/sources.list /etc/apt/sources.list.old
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-mirror main" > /etc/apt/sources.list
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-security-mirror main" >> /etc/apt/sources.list
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-updates-mirror main" >> /etc/apt/sources.list
+apt-get update
+#Install Chrome Remote Desktop
+curl -L -o /tmp/chrome-remote-desktop_current_amd64.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+apt-get install --assume-yes /tmp/chrome-remote-desktop_current_amd64.deb
+apt-get install --assume-yes xfce4 desktop-base dbus-x11 xscreensaver
+bash -c 'echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
+systemctl disable lightdm.service
+curl -L -o /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+apt-get install --assume-yes /tmp/google-chrome-stable_current_amd64.deb

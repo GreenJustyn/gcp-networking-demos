@@ -1,0 +1,23 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install apache2-utils mtr iperf3 dnsutils tcpdump -y
+cat <<EOF > /usr/local/share/ca-certificates/ngfw_ent_pem.crt
+${pem_cert}
+EOF
+update-ca-certificates
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+EOF
+cat <<EOF>> /etc/environment
+host_ip=${host_ip}
+target_privateip=${host_ip}
+target_nlbip=${nlb_ip}
+EOF

@@ -1,0 +1,36 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+EOF
+cat <<EOF > /etc/environment
+PM2_HOME=/etc/.pm2
+EOF
+cat /etc/skel/.bash_aliases >> /root/.bashrc
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+#apt-get install mtr dnsutils tcpdump tshark netcat-openbsd
+apt-get install npm -y
+npm install json-server@latest node@latest pm2 -g
+cat <<EOF > /root/db.json
+{
+  "posts": [
+    { "id": "1", "title": "a title", "views": 100 },
+    { "id": "2", "title": "another title", "views": 200 }
+  ],
+  "comments": [
+    { "id": "1", "text": "a comment about post 1", "postId": "1" },
+    { "id": "2", "text": "another comment about post 1", "postId": "1" }
+  ],
+  "profile": {
+    "name": "typicode"
+  }
+}
+EOF
+pm2 --name json-server start npx -- json-server /root/db.json --port 80

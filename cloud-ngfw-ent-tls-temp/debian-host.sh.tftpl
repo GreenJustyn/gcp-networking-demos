@@ -1,0 +1,33 @@
+#Copyright 2024 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install apache2 tcpdump iperf3 dnsutils lsof netcat-openbsd -y --no-install-recommends
+a2ensite default-ssl
+a2enmod ssl
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+EOF
+
+cat <<EOF > /etc/ssl/private/key.pem
+${private_key}
+EOF
+
+cat <<EOF > /etc/ssl/certs/cert.pem
+${certificate}
+EOF
+md_vm="http://169.254.169.254/computeMetadata/v1/instance/"
+vm_hostname="$(curl $md_vm/name -H "Metadata-Flavor:Google" )"
+vm_network="$(curl $md_vm/network-interfaces/0/network -H "Metadata-Flavor:Google" | cut -d/ -f4)"
+vm_zone="$(curl $md_vm/zone -H "Metadata-Flavor:Google" | cut -d/ -f4)"
+# Apache configuration:
+echo "Page on $vm_hostname in network $vm_network zone $vm_zone" | \
+tee /var/www/html/index.html
+sed -i 's/ssl-cert-snakeoil.pem/cert.pem/g' /etc/apache2/sites-available/default-ssl.conf 
+sed -i 's/ssl-cert-snakeoil.key/key.pem/g' /etc/apache2/sites-available/default-ssl.conf
+systemctl restart apache2

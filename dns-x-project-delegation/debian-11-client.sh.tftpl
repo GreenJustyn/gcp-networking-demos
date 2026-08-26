@@ -1,0 +1,15 @@
+#Copyright 2024 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get remove -y --purge man-db
+apt-get update
+apt-get install dnsutils tcpdump tcpreplay lsof netcat -y --no-install-recommends
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+EOF

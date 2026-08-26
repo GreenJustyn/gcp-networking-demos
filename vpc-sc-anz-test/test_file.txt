@@ -1,0 +1,24 @@
+The quick brown fox
+
+
+> google_access_context_manager_service_perimeter.service_perimeter["perimeter1"].status[0]
+{
+  "access_levels" = toset(null) /* of string */
+  "egress_policies" = tolist([])
+  "ingress_policies" = tolist([])
+  "resources" = toset([
+    "projects/692755141516",
+  ])
+  "restricted_services" = toset([
+    "bigquery.googleapis.com",
+    "storage.googleapis.com",
+  ])
+  "vpc_accessible_services" = tolist([
+    {
+      "allowed_services" = toset([
+        "bigquery.googleapis.com",
+        "storage.googleapis.com",
+      ])
+      "enable_restriction" = true
+    },
+  ])

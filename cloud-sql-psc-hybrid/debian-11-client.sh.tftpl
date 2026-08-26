@@ -1,0 +1,40 @@
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+#mv /etc/apt/sources.list /etc/apt/sources.list.old
+#echo "deb https://packages.cloud.google.com/apt debian-buster-mirror main" > /etc/apt/sources.list
+apt-get update
+apt-get install mariadb-client dnsutils tcpdump lsof netcat-openbsd -y --no-install-recommends
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+EOF
+mv /etc/motd /etc/motd.old
+cat <<EOF > /etc/motd
+To connect to Cloud SQL:
+1. Check the name resolves:
+dig ${dnsname}
+2. Connect to Cloud SQL with the MariaDB client:
+mysql --host ${dnsname} -u dbadmin -pworks4me
+3. Connect through Cloud SQL Proxy:
+mysql -u dbadmin --port 3306 -pworks4me --host=127.0.0.1
+EOF
+curl -o /usr/local/bin/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.9.0/cloud-sql-proxy.linux.amd64
+chmod +x /usr/local/bin/cloud-sql-proxy
+cat <<EOF > /etc/systemd/system/cloud-sql-proxy.service
+[Unit]
+Description=Cloud SQL Proxy
+Documentation=https://cloud.google.com/sql/docs/postgres/connect-compute-engine
+Requires=networking.service
+After=networking.service
+
+[Service]
+WorkingDirectory=/usr/local/bin
+ExecStart=/usr/local/bin/cloud-sql-proxy ${project}:${region}:${sqlinstance} --psc
+Restart=always
+StandardOutput=journal
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable cloud-sql-proxy.service
+systemctl start cloud-sql-proxy.service

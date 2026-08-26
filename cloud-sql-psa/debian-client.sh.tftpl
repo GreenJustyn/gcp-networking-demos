@@ -1,0 +1,10 @@
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+#apt-get install mariadb-client dnsutils tcpdump lsof netcat -y --no-install-recommends
+apt-get install mariadb-client -y --no-install-recommends
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+EOF
+#curl -o /usr/local/bin/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.9.0/cloud-sql-proxy.linux.amd64
+#chmod +x /usr/local/bin/cloud-sql-proxy

@@ -1,0 +1,107 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+EOF
+cat /etc/skel/.bash_aliases >> /root/.bashrc
+
+# Enable IP forwarding:
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/20-iptables.conf
+md_vm="http://metadata.google.internal/computeMetadata/v1/instance/"
+md_net="$md_vm/network-interfaces"
+NIC0_ADDR="$(curl $md_net/0/ip -H "Metadata-Flavor:Google")"
+export DEBIAN_FRONTEND=noninteractive
+apt-get remove -y --purge man-db
+apt-get update
+
+apt-get install mtr bird2 dnsutils tcpdump netcat-openbsd -y
+mv /etc/bird/bird.conf /etc/bird/bird.conf.bak
+cat <<EOF > /etc/bird/bird.conf
+router id $NIC0_ADDR;
+filter bgp_out {
+    if source = RTS_INHERIT then reject;
+    else {
+        bgp_med = ${med_priority};
+        accept;
+    }
+}
+protocol kernel {
+    ipv4 {
+        export all;
+        import all;
+    };
+    learn;
+}
+protocol device {
+        scan time 60;
+}
+log syslog { debug, trace, info, remote, warning, error, auth, fatal, bug };
+log stderr all;
+protocol bgp {
+  description "External network primary";
+  local as ${appliance_ext_asn};
+  neighbor ${cr_ext_ip_pri} as ${cr_ext_asn};
+  default bgp_med ${med_priority};
+  multihop;
+  graceful restart;
+  hold time 60;
+  ipv4 {
+    import all;
+    export filter bgp_out;
+    gateway recursive;
+  };
+}
+
+protocol bgp {
+  description "External network secondary";
+  local as ${appliance_ext_asn};
+  neighbor ${cr_ext_ip_sec} as ${cr_ext_asn};
+  default bgp_med ${med_priority};
+  multihop;
+  graceful restart;
+  hold time 60;
+  ipv4 {
+    import all;
+    export filter bgp_out;
+    gateway recursive;
+  };
+}
+
+protocol bgp {
+  description "Internal network primary";
+  local as ${appliance_int_asn};
+  neighbor ${cr_int_ip_pri} as ${cr_int_asn};
+  default bgp_med ${med_priority};
+  multihop;
+  graceful restart;
+  hold time 60;
+  ipv4 {
+    import all;
+    export filter bgp_out;
+    gateway recursive;
+  };
+}
+protocol bgp {
+  description "Internal network secondary";
+  local as ${appliance_int_asn};
+  neighbor ${cr_int_ip_sec} as ${cr_int_asn};
+  default bgp_med ${med_priority};
+  multihop;
+  graceful restart;
+  hold time 60;
+  ipv4 {
+    import all;
+    export filter bgp_out;
+    gateway recursive;
+  };
+}
+EOF
+systemctl restart bird
+systemctl enable bird

@@ -1,0 +1,28 @@
+<html>
+  <script
+    src="https://unpkg.com/htmx.org@1.9.10"
+    integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+    crossorigin="anonymous"
+  ></script>
+  <body>
+    <div style="margin-top: 100px; margin-left: 100px">
+      <h1>I'm the Frontend service on the Internet</h1>
+      <form hx-trigger="submit" hx-post="/callService" hx-target="#message">
+        <label for="url"> URL:</label>
+        <input
+          style="width: 308px"
+          type="text"
+          id="url"
+          name="url"
+          placeholder="The backend service URL"
+          required
+        />
+        <button hx-indicator="#loading" type="submit">Submit</button>
+        <p></p>
+        <span class="htmx-indicator" id="loading"> Loading... </span>
+        <div id="message" style="white-space: pre-wrap"></div>
+        <p></p>
+      </form>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,487 @@
+#Copyright 2025 Google LLC
+#
+#Licensed under the Apache License, Version 2.0 (the "License");
+#you may not use this file except in compliance with the License.
+#You may obtain a copy of the License at
+#
+#    https://www.apache.org/licenses/LICENSE-2.0
+#
+#Unless required by applicable law or agreed to in writing, software
+#distributed under the License is distributed on an "AS IS" BASIS,
+#WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#See the License for the specific language governing permissions and
+#limitations under the License.
+
+terraform {
+  required_providers {
+    google-beta = {
+      source = "hashicorp/google-beta"
+      version     = "~> 6.38"
+    }
+    google = {
+      source = "hashicorp/google"
+      version     = "~> 6.38"
+    }
+  }
+}
+
+provider "google" {
+  project         = var.project-id
+  region          = var.region
+  billing_project = var.project-id
+}
+
+resource "random_id" "id" {
+	byte_length = 2
+}
+
+data "google_netblock_ip_ranges" "ip_ranges" {
+  for_each = { "iap-forwarders" = null, "health-checkers" = null }
+  range_type = each.key
+}
+
+data "google_compute_image" "debian-image" {
+    family  = "debian-12"
+    project = "debian-cloud"
+}
+
+data "google_compute_zones" "region_availability" {
+    for_each    = local.region_map
+    region      = each.key
+}
+data "google_compute_default_service_account" "default_sa" { }
+
+locals {
+    full_region_list    = toset(distinct(flatten([for val in var.vpcs:  val.subnets[*].region])))
+    suffix = try(var.append_rand, true) == true ? "-${random_id.id.hex}" : ""
+    suffix_nodash = try(var.append_rand, true) == true ? "${random_id.id.hex}" : ""
+    region_map = {for i in distinct(flatten([for val in var.vpcs:  val.subnets[*].region])): i => null }
+}
+
+resource "random_shuffle" "gcp_zones" {
+    for_each        = { for region in data.google_compute_zones.region_availability: region.region => region.names }
+    input           = [ for zone in each.value : zone ]
+}
+
+resource "google_compute_project_metadata" "default" {
+  metadata = {
+    enable-oslogin  = "TRUE"
+    "cwd${local.suffix}" = path.cwd
+  }
+}
+
+resource "google_project_service" "api_enable" {
+    for_each                    = { for api in var.apis : api => null }
+    service                     = each.key
+    disable_on_destroy          = false
+    disable_dependent_services  = true
+}
+
+module "google-infra-vpc" {
+    source      = "../modules/google-infra-vpc"
+    project-id  = var.project-id
+    vpcs        = var.vpcs
+    namesuffix  = local.suffix_nodash
+}
+
+module "google-infra-vms" {
+    source      = "../modules/google-infra-vms"
+    project-id  = var.project-id
+    vms         = var.virtual_machines
+    namesuffix  = local.suffix_nodash
+    depends_on = [ module.google-infra-vpc ]
+}
+
+resource "google_compute_instance" "appliance_instance" {
+    for_each            =  { "1" : null, "2" : null }
+    name                = "inst${local.suffix}-${each.key}"
+    machine_type        = "n1-standard-4"
+    zone                = random_shuffle.gcp_zones[var.region].result[0]
+    can_ip_forward      = true
+    metadata_startup_script = templatefile("./multinic-debian.sh.tftpl", {
+        cr_ext_ip_pri       = google_compute_router_interface.ncc_ext_intf_pri.private_ip_address
+        cr_ext_ip_sec       = google_compute_router_interface.ncc_ext_intf_sec.private_ip_address
+        cr_int_ip_pri       = google_compute_router_interface.ncc_int_intf_pri.private_ip_address
+        cr_int_ip_sec       = google_compute_router_interface.ncc_int_intf_sec.private_ip_address
+        appliance_ext_asn   = var.appliance_ext_asn
+        appliance_int_asn   = var.appliance_int_asn
+        cr_ext_asn          = var.cr_ext_asn
+        cr_int_asn          = var.cr_int_asn
+        med_priority        = 100+each.key
+        })
+    boot_disk {
+        initialize_params {
+            image = data.google_compute_image.debian-image.self_link
+        }
+    }
+    network_interface {
+        subnetwork  = module.google-infra-vpc.subnets["vpc-external-subnet"].self_link
+        network_ip  = cidrhost(module.google-infra-vpc.subnets["vpc-external-subnet"].ip_cidr_range,80+each.key)
+    }
+    network_interface {
+        subnetwork  = module.google-infra-vpc.subnets["vpc-internal-subnet"].self_link
+        network_ip  = cidrhost(module.google-infra-vpc.subnets["vpc-internal-subnet"].ip_cidr_range,80+each.key)
+    }
+    service_account {
+        email = data.google_compute_default_service_account.default_sa.email
+        scopes = ["cloud-platform"]
+    }
+}
+
+#
+# NCC Configs
+#
+
+resource "google_network_connectivity_hub" "hub_external" {
+    project = var.project-id
+    name    = "hub-external${local.suffix}"
+}
+
+resource "google_network_connectivity_hub" "hub_internal" {
+    project = var.project-id
+    name    = "hub-internal${local.suffix}"
+}
+
+resource "google_network_connectivity_spoke" "external_spoke" {
+    name = "spoke-ext-appliance${local.suffix}"
+    location = one(local.full_region_list)
+    hub =  google_network_connectivity_hub.hub_external.id
+    linked_router_appliance_instances {
+        dynamic "instances" {
+            for_each = toset(["1", "2"])
+            content {
+                virtual_machine = google_compute_instance.appliance_instance[instances.value].self_link
+                ip_address = google_compute_instance.appliance_instance[instances.value].network_interface[0].network_ip
+            }
+        }
+        site_to_site_data_transfer = true
+    }
+}
+
+resource "google_network_connectivity_spoke" "internal_spoke" {
+    name = "spoke-int-appliance${local.suffix}"
+    location = one(local.full_region_list)
+    hub =  google_network_connectivity_hub.hub_internal.id
+    linked_router_appliance_instances {
+        dynamic "instances" {
+            for_each = toset(["1", "2"])
+            content {
+                virtual_machine = google_compute_instance.appliance_instance[instances.value].self_link
+                ip_address = google_compute_instance.appliance_instance[instances.value].network_interface[1].network_ip
+            }
+        }
+        site_to_site_data_transfer = true
+    }
+}
+
+resource "google_compute_router" "ncc-router-external" {
+  name    = "ncc-ext${local.suffix}"
+  region  = one(local.full_region_list)
+  network = module.google-infra-vpc.vpcs.vpc-external.self_link
+  bgp {
+    asn = var.cr_ext_asn
+  }
+}
+
+resource "google_compute_router" "ncc-router-internal" {
+  name    = "ncc-int${local.suffix}"
+  region  = one(local.full_region_list)
+  network = module.google-infra-vpc.vpcs.vpc-internal.self_link
+  bgp {
+    asn = var.cr_int_asn
+    advertise_mode    = "CUSTOM"
+    advertised_groups = ["ALL_SUBNETS"]
+    advertised_ip_ranges {
+    range = module.google-infra-vpc.subnets["vpc-peered-subnet"].ip_cidr_range
+    }
+  }
+}
+
+resource "google_compute_router_interface" "ncc_ext_intf_pri" {
+    name               = "ncc-ext-intf-pri${local.suffix}"
+    region             = google_compute_router.ncc-router-external.region
+    router             = google_compute_router.ncc-router-external.name
+    subnetwork         = module.google-infra-vpc.subnets["vpc-external-subnet"].self_link
+    private_ip_address = cidrhost(module.google-infra-vpc.subnets["vpc-external-subnet"].ip_cidr_range,55)
+}
+
+resource "google_compute_router_interface" "ncc_ext_intf_sec" {
+    name               = "ncc-ext-intf-sec${local.suffix}"
+    region             = google_compute_router.ncc-router-external.region
+    router             = google_compute_router.ncc-router-external.name
+    subnetwork         = module.google-infra-vpc.subnets["vpc-external-subnet"].self_link
+    private_ip_address = cidrhost(module.google-infra-vpc.subnets["vpc-external-subnet"].ip_cidr_range,65)
+    redundant_interface = google_compute_router_interface.ncc_ext_intf_pri.name
+}
+
+resource "google_compute_router_peer" "peer_ext_primary" {
+    for_each                    = google_compute_instance.appliance_instance
+    name                        = "ncc-ext-peer-primary${local.suffix}-${each.key}"
+    router                      = google_compute_router.ncc-router-external.name
+    region                      = google_compute_router.ncc-router-external.region
+    interface                   = google_compute_router_interface.ncc_ext_intf_pri.name
+    router_appliance_instance   = each.value.self_link
+    peer_asn                    = var.appliance_ext_asn
+    peer_ip_address             = each.value.network_interface[0].network_ip
+    depends_on                  = [
+        google_network_connectivity_spoke.external_spoke
+    ]
+}
+
+resource "google_compute_router_peer" "peer_ext_secondary" {
+    for_each                    = google_compute_instance.appliance_instance
+    name                        = "ncc-ext-peer-secondary${local.suffix}-${each.key}"
+    router                      = google_compute_router.ncc-router-external.name
+    region                      = google_compute_router.ncc-router-external.region
+    interface                   = google_compute_router_interface.ncc_ext_intf_sec.name
+    router_appliance_instance   = each.value.self_link
+    peer_asn                    = var.appliance_ext_asn
+    peer_ip_address             = each.value.network_interface[0].network_ip
+    depends_on                  = [
+        google_network_connectivity_spoke.external_spoke
+    ]
+}
+
+resource "google_compute_router_interface" "ncc_int_intf_pri" {
+    name               = "ncc-int-intf-pri${local.suffix}"
+    region             = google_compute_router.ncc-router-internal.region
+    router             = google_compute_router.ncc-router-internal.name
+    subnetwork         = module.google-infra-vpc.subnets["vpc-internal-subnet"].self_link
+    private_ip_address = cidrhost(module.google-infra-vpc.subnets["vpc-internal-subnet"].ip_cidr_range,55)
+}
+
+resource "google_compute_router_interface" "ncc_int_intf_sec" {
+    name               = "ncc-int-intf-sec${local.suffix}"
+    region             = google_compute_router.ncc-router-internal.region
+    router             = google_compute_router.ncc-router-internal.name
+    subnetwork         = module.google-infra-vpc.subnets["vpc-internal-subnet"].self_link
+    private_ip_address = cidrhost(module.google-infra-vpc.subnets["vpc-internal-subnet"].ip_cidr_range,65)
+    redundant_interface = google_compute_router_interface.ncc_int_intf_pri.name
+}
+
+resource "google_compute_router_peer" "peer_int_primary" {
+    for_each                    = google_compute_instance.appliance_instance
+    name                        = "ncc-int-peer-primary${local.suffix}-${each.key}"
+    router                      = google_compute_router.ncc-router-internal.name
+    region                      = google_compute_router.ncc-router-internal.region
+    interface                   = google_compute_router_interface.ncc_int_intf_pri.name
+    router_appliance_instance   = each.value.self_link
+    peer_asn                    = var.appliance_int_asn
+    peer_ip_address             = each.value.network_interface[1].network_ip
+    depends_on                  = [
+        google_network_connectivity_spoke.internal_spoke
+    ]
+}
+
+resource "google_compute_router_peer" "peer_int_secondary" {
+    for_each                    = google_compute_instance.appliance_instance
+    name                        = "ncc-int-peer-secondary${local.suffix}-${each.key}"
+    router                      = google_compute_router.ncc-router-internal.name
+    region                      = google_compute_router.ncc-router-internal.region
+    interface                   = google_compute_router_interface.ncc_int_intf_sec.name
+    router_appliance_instance   = each.value.self_link
+    peer_asn                    = var.appliance_int_asn
+    peer_ip_address             = each.value.network_interface[1].network_ip
+    depends_on                  = [
+        google_network_connectivity_spoke.internal_spoke
+    ]
+}
+
+#
+# HA VPN to remote VPC
+#
+
+resource "random_password" "vpnpassphrase" {
+  length           = 16
+  special          = false
+}
+
+module "vpn_ha-1" {
+    source  = "terraform-google-modules/vpn/google//modules/vpn_ha"
+    version = "~> 4.0"
+    project_id  = var.project-id
+    region  = "asia-southeast1"
+    network         = module.google-infra-vpc.vpcs.vpc-external.self_link
+    name            = "ext-ha-vpn${local.suffix}"
+    peer_gcp_gateway = module.vpn_ha-2.self_link
+    router_asn = 64514
+    tunnels = {
+        remote-0 = {
+            bgp_peer = {
+                address = "169.254.1.1"
+                asn     = 64513
+            }
+            bgp_peer_options  = null
+            bgp_session_range = "169.254.1.2/30"
+            ike_version       = 2
+            vpn_gateway_interface = 0
+            peer_external_gateway_interface = null
+            shared_secret     = random_password.vpnpassphrase.result
+        }
+        remote-1 = {
+            bgp_peer = {
+                address = "169.254.2.1"
+                asn     = 64513
+            }
+            bgp_peer_options  = null
+            bgp_session_range = "169.254.2.2/30"
+            ike_version       = 2
+            vpn_gateway_interface = 1
+            peer_external_gateway_interface = null
+            shared_secret     = random_password.vpnpassphrase.result
+        }
+    }
+}
+
+module "vpn_ha-2" {
+    source          = "terraform-google-modules/vpn/google//modules/vpn_ha"
+    version         = "~> 4.0"
+    project_id      = var.project-id
+    region          = "asia-southeast1"
+    network         = module.google-infra-vpc.vpcs.vpc-remote.self_link
+    name            = "remote-ha-vpn${local.suffix}"
+    router_asn      = 64513
+    peer_gcp_gateway = module.vpn_ha-1.self_link
+    tunnels = {
+        remote-0 = {
+            bgp_peer = {
+                address = "169.254.1.2"
+                asn     = 64514
+            }
+            bgp_peer_options  = null
+            bgp_session_range = "169.254.1.1/30"
+            ike_version       = 2
+            vpn_gateway_interface = 0
+            peer_external_gateway_interface = null
+            shared_secret     = random_password.vpnpassphrase.result
+        }
+        remote-1 = {
+            bgp_peer = {
+                address = "169.254.2.2"
+                asn     = 64514
+            }
+            bgp_peer_options  = null
+            bgp_session_range = "169.254.2.1/30"
+            ike_version       = 2
+            vpn_gateway_interface = 1
+            peer_external_gateway_interface = null
+            shared_secret     = random_password.vpnpassphrase.result
+        }
+    }
+}
+
+resource "google_network_connectivity_spoke" "remote_spoke_vpn" {
+    name = "spoke-remote${local.suffix}"
+    location = one(local.full_region_list)
+    hub =  google_network_connectivity_hub.hub_external.id
+    linked_vpn_tunnels {
+        uris = values(module.vpn_ha-1.tunnel_self_links)
+        site_to_site_data_transfer = true
+    }
+}
+
+resource "google_compute_network_peering" "peerings-a-b" {
+    for_each                = { for peer in var.peerings : format("%s-%s",peer.network_a,peer.network_b) => peer }
+    name                    = "${each.key}${local.suffix}"
+    network                 = module.google-infra-vpc.vpcs["${each.value.network_a}"].self_link
+    peer_network            = module.google-infra-vpc.vpcs["${each.value.network_b}"].self_link
+    export_custom_routes    = true
+    import_custom_routes    = true
+}
+
+resource "google_compute_network_peering" "peerings-b-a" {
+    for_each                = { for peer in var.peerings : format("%s-%s",peer.network_b,peer.network_a) => peer }
+    name                    = "${each.key}${local.suffix}"
+    network                 = module.google-infra-vpc.vpcs["${each.value.network_b}"].self_link
+    peer_network            = module.google-infra-vpc.vpcs["${each.value.network_a}"].self_link
+    import_custom_routes    = true
+    export_custom_routes    = true
+}
+
+
+# Cloud NAT
+
+resource "google_compute_router" "nat_router" {
+    for_each            = module.google-infra-vpc.vpcs
+    name    = "nat-router-${each.key}${local.suffix}"
+    region  = var.region
+    network = each.value.id
+}
+
+resource "google_compute_router_nat" "nat_auto" {
+    for_each = google_compute_router.nat_router
+    name   = "nat${each.key}${local.suffix}"
+    router = each.value.name
+    region = each.value.region
+    nat_ip_allocate_option = "AUTO_ONLY"
+    source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
+# NGFW #
+
+resource "google_compute_network_firewall_policy" "fw_policy" {
+    name        = "fwpolicy${local.suffix}"
+    description = ""
+}
+
+resource "google_compute_network_firewall_policy_association" "fw_policy_association" {
+    for_each            = module.google-infra-vpc.vpcs
+    name                = "fwpolicyassoc-${each.key}${local.suffix}"
+    attachment_target   = each.value.id
+    firewall_policy     = google_compute_network_firewall_policy.fw_policy.name
+}
+
+
+resource "google_compute_network_firewall_policy_rule" "iap_rule" {
+    action                  = "allow"
+    description             = ""
+    direction               = "INGRESS"
+    disabled                = false
+    enable_logging          = false
+    firewall_policy         = google_compute_network_firewall_policy.fw_policy.name
+    priority                = 200
+    rule_name               = "iap-allow${local.suffix}"
+    match {
+        src_ip_ranges = data.google_netblock_ip_ranges.ip_ranges["iap-forwarders"].cidr_blocks_ipv4
+        layer4_configs {
+        ip_protocol = "tcp"
+        ports = [22]
+        }
+    }
+}
+
+resource "google_compute_network_firewall_policy_rule" "hc_rule" {
+  action                  = "allow"
+  description             = ""
+  direction               = "INGRESS"
+  disabled                = false
+  enable_logging          = false
+  firewall_policy         = google_compute_network_firewall_policy.fw_policy.name
+  priority                = 1200
+  rule_name               = "hc-allow${local.suffix}"
+  match {
+    src_ip_ranges = data.google_netblock_ip_ranges.ip_ranges["health-checkers"].cidr_blocks_ipv4
+    layer4_configs {
+      ip_protocol = "tcp"
+      ports = [80,443]
+    }
+  }
+}
+
+resource "google_compute_network_firewall_policy_rule" "rfc1918_rule" {
+    action                  = "allow"
+    description             = ""
+    direction               = "INGRESS"
+    disabled                = false
+    enable_logging          = false
+    firewall_policy         = google_compute_network_firewall_policy.fw_policy.name
+    priority                = 20000
+    rule_name               = "rfc1918-allow${local.suffix}"
+    match {
+        src_ip_ranges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+        layer4_configs {
+        ip_protocol = "all"
+        }
+    }
+}
+

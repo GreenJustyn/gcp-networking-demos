@@ -1,0 +1,18 @@
+# Enable VPC accessible services restriction.
+ enableRestriction: True
+
+ # Enables VPC Accessible Services enforcement for all APIs (including
+ # unsupported APIs) for Private Google Access configured with Private VIP
+ # and Private Service Connect Endpoint for Global Google APIs that uses
+ # 'all-apis' bundle.
+ servicePatternsEnforcementScopes: 
+ - GOOGLE_APIS_VIA_PRIVATE_PATH
+
+ # Allowed services and service patterns.
+ allowedServicePatterns:
+ # Allowed supported services.
+ #- service: 'storage.googleapis.com'
+ #- service: 'logging.googleapis.com'
+ # Allowed URL patterns for unsupported services.
+ #- pattern: 'maps.googleapis.com/*'
+ - pattern: 'androidmanagement.googleapis.com/*'

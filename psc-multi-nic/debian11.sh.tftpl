@@ -1,0 +1,11 @@
+#!/bin/bash -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install tcpdump dnsutils apache2 -y
+# Enable IP forwarding:
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/20-iptables.conf
+HOSTNAME="$(curl -H "Metadata-Flavor:Google" http://metadata.google.internal/computeMetadata/v1/instance/name)"
+echo "Page served from: $HOSTNAME" | tee /var/www/html/index.html
+chkconfig httpd on || systemctl enable httpd || systemctl enable apache2
+service httpd restart || systemctl restart httpd || systemctl restart apache2

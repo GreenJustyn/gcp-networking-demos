@@ -1,0 +1,44 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install apache2 tcpdump tshark iperf3 dnsutils lsof netcat-openbsd -y --no-install-recommends
+a2ensite default-ssl
+a2enmod ssl
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+cat /etc/skel/.bash_aliases >> /root/.bashrc
+cat <<EOF > /etc/ssl/private/key.pem
+${private_key}
+EOF
+cat <<EOF > /etc/ssl/certs/cert.pem
+${certificate}
+EOF
+MD_VM="http://metadata.google.internal/computeMetadata/v1/instance/"
+VM_HOSTNAME="$(curl -sS -H "Metadata-Flavor:Google" $MD_VM/name)"
+VM_ZONE="$(curl -sS -H "Metadata-Flavor:Google" $MD_VM/zone | cut -d/ -f4)"
+SERVING_PORT="$(curl -sS -H "Metadata-Flavor:Google" $MD_VM/attributes/serving_port)"
+mkdir -p /var/www/vhost-$${SERVING_PORT}/public_html
+echo "Page served from: $VM_HOSTNAME" on port $${SERVING_PORT} in $VM_ZONE | tee /var/www/vhost-$${SERVING_PORT}/public_html/index.html
+cat <<EOF > /etc/apache2/sites-enabled/001-vserver.conf
+Listen $${SERVING_PORT}
+<VirtualHost *:$${SERVING_PORT}>
+    ServerName www.dot1.org
+    DocumentRoot "/var/www/vhost-$${SERVING_PORT}/public_html"
+    SSLEngine on
+    SSLCertificateFile /etc/ssl/certs/cert.pem
+    SSLCertificateKeyFile /etc/ssl/private/key.pem
+</VirtualHost>
+EOF
+sed -i 's/ssl-cert-snakeoil.pem/cert.pem/g' /etc/apache2/sites-available/default-ssl.conf 
+sed -i 's/ssl-cert-snakeoil.key/key.pem/g' /etc/apache2/sites-available/default-ssl.conf
+systemctl enable apache2 || chkconfig httpd on || systemctl enable httpd
+systemctl restart apache2 || service httpd restart || systemctl restart httpd

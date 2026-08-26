@@ -1,0 +1,19 @@
+#Copyright 2024 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install dnsutils tcpdump lsof netcat -y
+# Make bash easier on Debian
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias la='ls -lAh'
+alias ll='ls -lh'
+alias lsa='ls -lah'
+alias l='ls -CF'
+alias grep='grep --color=auto'
+EOF

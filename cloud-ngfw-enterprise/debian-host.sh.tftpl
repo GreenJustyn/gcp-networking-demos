@@ -1,0 +1,22 @@
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+#mv /etc/apt/sources.list /etc/apt/sources.list.old
+#echo "deb https://packages.cloud.google.com/apt debian-buster-mirror main" > /etc/apt/sources.list
+apt-get update
+apt-get install apache2 tcpdump iperf3 -y
+a2ensite default-ssl
+a2enmod ssl
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+cat /etc/skel/.bash_aliases >> /root/.bashrc
+md_vm="http://169.254.169.254/computeMetadata/v1/instance/"
+vm_hostname="$(curl $md_vm/name -H "Metadata-Flavor:Google" )"
+vm_network="$(curl $md_vm/network-interfaces/0/network -H "Metadata-Flavor:Google" | cut -d/ -f4)"
+vm_zone="$(curl $md_vm/zone -H "Metadata-Flavor:Google" | cut -d/ -f4)"
+# Apache configuration:
+echo "Page on $vm_hostname in network $vm_network zone $vm_zone" | \
+tee /var/www/html/index.html
+systemctl restart apache2

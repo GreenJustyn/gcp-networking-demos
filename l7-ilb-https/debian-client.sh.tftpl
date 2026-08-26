@@ -1,0 +1,24 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash -x
+exec > >(tee -ia ~/startup_script_deb.txt)
+exec 2> >(tee -ia ~/startup_script_deb.txt >& 2)
+exec 19> ~/startup_script_deb.txt
+export BASH_XTRACEFD="19"
+PS4='$LINENO: '
+export DEBIAN_FRONTEND=noninteractive
+#mv /etc/apt/sources.list /etc/apt/sources.list.old
+#echo "deb https://packages.cloud.google.com/apt debian-buster-mirror main" > /etc/apt/sources.list
+apt-get update
+apt-get install apache2-utils mtr iperf3 dnsutils tcpdump lsof netcat-openbsd -y
+cat <<EOF > /usr/local/share/ca-certificates/internal-alb.crt
+${PEM_CERT}
+EOF
+update-ca-certificates
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+EOF
+cat <<EOF>> /etc/environment
+VIP=${ALB_VIP}
+EOF

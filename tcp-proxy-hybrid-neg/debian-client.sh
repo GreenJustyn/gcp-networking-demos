@@ -1,0 +1,16 @@
+#Copyright 2025 Google LLC.
+#SPDX-License-Identifier: Apache-2.0
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+cat /etc/skel/.bash_aliases >> /root/.bashrc
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install tcpdump lsof netcat-openbsd dnsutils -y

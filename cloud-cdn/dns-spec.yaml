@@ -1,0 +1,10 @@
+swagger: "2.0"
+info:
+  description: "Cloud Endpoints DNS"
+  title: "Cloud Endpoints DNS"
+  version: "1.0.0"
+paths: {}
+host: "cdndemo.endpoints.mhanline-cdn01.cloud.goog"
+x-google-endpoints:
+- name: "cdndemo.endpoints.mhanline-cdn01.cloud.goog"
+  target: "34.149.244.152"

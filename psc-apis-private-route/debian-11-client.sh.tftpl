@@ -1,0 +1,17 @@
+#!/bin/bash
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+alias ll='ls -lh'
+alias lal='ls -lah'
+EOF
+export DEBIAN_FRONTEND=noninteractive
+mv /etc/apt/sources.list /etc/apt/sources.list.old
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-mirror main" > /etc/apt/sources.list
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-security-mirror main" >> /etc/apt/sources.list
+echo "deb https://packages.cloud.google.com/apt debian-bullseye-updates-mirror main" >> /etc/apt/sources.list
+apt-get update
+apt-get -y upgrade

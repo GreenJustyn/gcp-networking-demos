@@ -1,0 +1,1 @@
+gcloud access-context-manager perimeters update accessPolicies/418665130536/servicePerimeters/perim2b65 --set-vpc-accessible-services=service_pattern.yaml

@@ -1,0 +1,30 @@
+#!/bin/bash -x
+exec 5> startup_script_deb.txt
+BASH_XTRACEFD="5"
+PS4='$LINENO: '
+set -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install tcpdump dnsutils apache2 -y
+#a2ensite default-ssl
+#a2enmod ssl
+HOSTNAME="$(curl -H "Metadata-Flavor:Google" http://metadata.google.internal/computeMetadata/v1/instance/name)"
+mkdir -p /var/www/vhost-8080/public_html
+mkdir -p /var/www/vhost-8081/public_html
+echo "Page served from: $HOSTNAME" on TCP 8080 | tee /var/www/vhost-8080/public_html/index.html
+echo "Page served from: $HOSTNAME" on TCP 8081 | tee /var/www/vhost-8081/public_html/index.html
+cat <<EOF > /etc/apache2/sites-enabled/001-vserver.conf
+Listen 8080
+Listen 8081
+<VirtualHost *:8080>
+    ServerName www.dot1.org
+    DocumentRoot "/var/www/vhost-8080/public_html"
+</VirtualHost>
+
+<VirtualHost *:8081>
+    ServerName www.dot2.org
+    DocumentRoot "/var/www/vhost-8081/public_html"
+</VirtualHost>
+EOF
+chkconfig httpd on || systemctl enable httpd || systemctl enable apache2
+service httpd restart || systemctl restart httpd || systemctl restart apache2

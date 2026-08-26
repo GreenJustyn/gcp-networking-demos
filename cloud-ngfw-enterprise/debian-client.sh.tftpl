@@ -1,0 +1,12 @@
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+#mv /etc/apt/sources.list /etc/apt/sources.list.old
+#echo "deb https://packages.cloud.google.com/apt debian-buster-mirror main" > /etc/apt/sources.list
+apt-get update
+apt-get install apache2-utils iperf3 tcpdump -y
+cat <<EOF > /etc/skel/.bash_aliases
+alias startuplog='sudo journalctl -u google-startup-scripts.service'
+EOF
+cat <<EOF>> /etc/environment
+target_nlbip=${nlb_ip}
+EOF
